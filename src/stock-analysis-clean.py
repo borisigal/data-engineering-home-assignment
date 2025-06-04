@@ -8,6 +8,12 @@ from pyspark.sql.types import *
 import argparse
 import boto3
 from urllib.parse import urlparse
+# import dotenv
+# dotenv.load_dotenv()
+
+aws_access_key = os.getenv('AWS_ACCESS_KEY_ID')
+aws_secret_key = os.getenv('AWS_SECRET_ACCESS_KEY')
+aws_region = os.getenv('AWS_REGION')
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -151,6 +157,10 @@ class SparkUtility:
             .config("spark.sql.adaptive.skewJoin.enabled", "true") \
             .config("spark.sql.parquet.compression.codec", "snappy") \
             .config("spark.sql.files.maxPartitionBytes", "134217728") \
+            .config("spark.hadoop.fs.s3a.access.key", aws_access_key) \
+            .config("spark.hadoop.fs.s3a.secret.key", aws_secret_key) \
+            .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
+            .config("spark.jars.packages", "org.apache.hadoop:hadoop-aws:3.3.2,com.amazonaws:aws-java-sdk-bundle:1.11.1026") \
             .getOrCreate()
 
         logger.info(f"Spark session created: {self.spark.version}")
@@ -202,7 +212,7 @@ class AWSConnectorUtility:
         key = parsed_url.path.lstrip('/')
 
         s3 = boto3.client('s3')
-        local_file_path = os.path.join(os.getcwd(), os.path.basename(key))
+        local_file_path = os.path.join(os.getcwd().rstrip('/src'), os.path.basename(key))
 
         logger.info(f"Downloading {key} from bucket {bucket_name} to {local_file_path}")
         s3.download_file(bucket_name, key, local_file_path)
@@ -213,6 +223,7 @@ class AWSConnectorUtility:
     def write_dataframe_to_s3(self, df: DataFrame, analysis_name: str,
                               partition_cols: Optional[List[str]] = None):
         """Write DataFrame to S3 in Parquet format"""
+        # Convert s3:// to s3a:// for Spark compatibility
         output_path = f"s3://{self.output_bucket}/results/{analysis_name}/"
         logger.info(f"Writing {analysis_name} to: {output_path}")
 
@@ -241,9 +252,9 @@ class AWSConnectorUtility:
                 self.write_dataframe_to_s3(df, analysis_name, partition_cols)
 
 
-def display_results(results: List[Dict[str, DataFrame]], local_mode: bool):
+def display_results(results: List[Dict[str, DataFrame]], diplay: bool = True):
     """Display results in local mode"""
-    if local_mode:
+    if diplay:
         logger.info("\n=== SAMPLE RESULTS ===")
 
         display_config = {
@@ -268,7 +279,8 @@ def parse_arguments():
     parser.add_argument('--input-path', required=True, help='S3 path to input CSV file')
     parser.add_argument('--output-bucket', required=True, help='S3 bucket for output files')
     parser.add_argument('--local-mode', action='store_true', help='Run in local mode for testing')
-    return parser.parse_args()
+    args, unknown = parser.parse_known_args()
+    return args
 
 def main():
     """Main execution function"""
@@ -283,12 +295,11 @@ def main():
         # For local mode, adjust the input path
         if not args.local_mode:
             logger.info("Running in production mode, using S3 input path")
-            AWSConnectorUtility.download_data_file_from_s3(args.input_path)
-            # df = spark_util.read_csv_with_schema(input_path)
+            local_file_path = AWSConnectorUtility.download_data_file_from_s3(args.input_path)
+            df = spark_util.read_csv_with_schema(local_file_path)
         else:
             logger.info("Running in local mode, adjusting input path")
-            input_path = f"../{args.input_path}"
-            df = spark_util.read_csv_with_schema(input_path)
+            df = spark_util.read_csv_with_schema(args.input_path)
 
         # Step Three: Instantiate StockAnalyzer
         stock_analyzer = StockAnalyzer(df)
@@ -297,15 +308,15 @@ def main():
         results = stock_analyzer.run_all_analyses()
 
         # Display results in local mode
-        display_results(results, args.local_mode)
+        display_results(results, True)
 
         # Step Five: Write results to S3 (skip in local mode)
-        if not args.local_mode:
-            s3_connector = AWSConnectorUtility(args.output_bucket)
-            s3_connector.write_results_list(results)
-            logger.info("All results written to S3 successfully!")
-        else:
-            logger.info("Local mode: Skipping S3 writes")
+        # if not args.local_mode:
+        s3_connector = AWSConnectorUtility(args.output_bucket)
+        s3_connector.write_results_list(results)
+        logger.info("All results written to S3 successfully!")
+        # else:
+            # logger.info("Local mode: Skipping S3 writes")
 
     except Exception as e:
         logger.error(f"Error during processing: {str(e)}")
