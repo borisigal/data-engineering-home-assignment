@@ -28,7 +28,16 @@ class StockAnalyzer:
         self.df_with_returns = None
 
     def calculate_daily_returns(self) -> DataFrame:
-        """Calculate daily returns for each stock"""
+        """Calculate daily returns for each stock.
+
+        Formula:
+            daily_return = ((close - prev_close) / prev_close) * 100
+
+        Where:
+            - close: closing price of the current day
+            - prev_close: closing price of the previous day for the same stock (ticker)
+            - Result is expressed as a percentage.
+        """
         if self.df_with_returns is None:
             window_spec = Window.partitionBy("ticker").orderBy("Date")
 
@@ -47,7 +56,18 @@ class StockAnalyzer:
         return self.df_with_returns
 
     def calculate_average_daily_returns(self) -> DataFrame:
-        """Compute the average daily return of all stocks for every date"""
+        """Compute the average daily return of all stocks for every date.
+
+        The daily return for each stock is calculated as:
+            daily_return = ((close - prev_close) / prev_close) * 100
+
+        Where:
+            - close: Closing price of the stock on the current date.
+            - prev_close: Closing price of the same stock on the previous trading date.
+            - daily_return: Percentage change in closing price from the previous day.
+
+        This method computes the average of all non-null daily returns for each date across all stocks.
+        """
         logger.info("Calculating average daily returns by date")
 
         df_with_returns = self.calculate_daily_returns()
@@ -67,7 +87,20 @@ class StockAnalyzer:
         return avg_returns_with_year
 
     def find_highest_worth_stock(self) -> DataFrame:
-        """Find stock with highest average worth (close * volume)"""
+        """Find the stock with the highest average worth, where worth is defined as (close price \* volume) for each day.
+
+        Formula:
+            worth = close \* volume
+
+        Logic:
+            - For each row, calculate the worth by multiplying the closing price by the trading volume.
+            - Compute the average worth for each stock (ticker) across all available dates.
+            - Identify and return the stock with the highest average worth.
+
+        Parameters:
+            - close: Closing price of the stock for a given day.
+            - volume: Number of shares traded for the stock on that day.
+        """
         logger.info("Finding highest worth stock")
 
         df_with_worth = self.df.withColumn(
@@ -84,7 +117,27 @@ class StockAnalyzer:
         return avg_worth
 
     def find_most_volatile_stock(self) -> DataFrame:
-        """Find most volatile stock by annualized standard deviation"""
+        """Find the most volatile stock by annualized standard deviation of daily returns.
+
+        Formula:
+            annualized_volatility = stddev(daily_return) * sqrt(252)
+
+        Where:
+            - daily_return: Percentage change in closing price from the previous day for each stock.
+            - stddev(daily_return): Standard deviation of daily returns for each stock.
+            - 252: Approximate number of trading days in a year.
+
+        Logic:
+            1. Calculate daily returns for each stock.
+            2. Compute the standard deviation of daily returns for each stock.
+            3. Annualize the volatility by multiplying by the square root of 252.
+            4. Identify and return the stock with the highest annualized volatility.
+
+        Parameters:
+            - close: Closing price of the stock for a given day.
+            - prev_close: Closing price of the same stock on the previous trading day.
+            - ticker: Stock symbol used to group and analyze each stock separately.
+        """
         logger.info("Finding most volatile stock")
 
         df_with_returns = self.calculate_daily_returns()
@@ -104,7 +157,25 @@ class StockAnalyzer:
         return volatility
 
     def find_top_thirty_day_returns(self) -> DataFrame:
-        """Find top three 30-day return dates by ticker"""
+        """Find the top three 30-day return dates for each ticker.
+
+        Formula:
+            return_thirty_days = ((close - close_thirty_days_ago) / close_thirty_days_ago) * 100
+
+        Logic:
+            - For each stock (ticker), calculate the closing price from 30 days prior for each date.
+            - Compute the 30-day return as the percentage change between the current close and the close 30 days ago.
+            - Filter out rows where the 30-day prior close is not available (i.e., for the first 30 days).
+            - For all tickers, select the top three dates with the highest 30-day returns.
+
+        Parameters:
+            - close: Closing price of the stock on the current date.
+            - close_thirty_days_ago: Closing price of the stock 30 days before the current date.
+            - ticker: Stock symbol used to group and analyze each stock separately.
+
+        Returns:
+            DataFrame containing the ticker and date for the top three 30-day returns across all stocks.
+        """
         logger.info("Finding top thirty-day returns")
 
         window_spec = Window.partitionBy("ticker").orderBy("Date")
@@ -316,7 +387,7 @@ def main():
         s3_connector.write_results_list(results)
         logger.info("All results written to S3 successfully!")
         # else:
-            # logger.info("Local mode: Skipping S3 writes")
+        #     logger.info("Local mode: Skipping S3 writes")
 
     except Exception as e:
         logger.error(f"Error during processing: {str(e)}")
