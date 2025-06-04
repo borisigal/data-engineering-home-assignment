@@ -144,3 +144,5 @@ cython_debug/
 .idea
 
 #
+/deactivate/
+/activate/
